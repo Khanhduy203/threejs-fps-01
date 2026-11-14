@@ -28,7 +28,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -80,6 +80,7 @@ const hud = createHud({
     syncHud();
   },
   onDeploy() {
+    audio.unlock();
     closeBuyMenu();
     input.requestLock();
   },
@@ -518,6 +519,7 @@ function syncCamera() {
 }
 
 function syncHud() {
+  hud.setVisible(state.phase !== 'menu' && state.phase !== 'matchEnd');
   const slot = weapons.currentSlot();
   hud.setHealth(body.health, body.armour);
   hud.setAmmo(slot.mag, slot.reserve, slot.def.name, weapons.state.reloadLeft > 0);
@@ -666,8 +668,10 @@ function runShot(name) {
     state.bomb.x = SITES.A.x;
     state.bomb.z = SITES.A.z;
     bomb.dropAt(SITES.A.x, SITES.A.z);
-    body.position.set(-17, 0, -6);
+    body.position.set(-13, 0, -3);
     settle(20);
+    aimPoint.set(SITES.A.x, 1.2, SITES.A.z);
+    aimAt(aimPoint);
     finishMatch();
   } else {
     // 'play': mid-round, rifle in hand, an enemy in the sights.
@@ -717,5 +721,8 @@ window.addEventListener('resize', () => {
 bots.resetRound(1);
 syncCamera();
 syncHud();
+// A read hook for automated playtests (and curious players): the live match
+// state, the player and the bots. The game never reads it back.
+window.__sandline = { state, player, bots, weapons, world };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

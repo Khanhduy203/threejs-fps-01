@@ -121,6 +121,8 @@ export function createCombat(scene, world, random, audio) {
     spawnParticles(point, 26, emberMat, 9, 0.9, 6);
     spawnParticles(point, 14, dustMat, 5, 1.4, 4);
   }
+
+  const grenades = [];
   const grenadeGeo = new THREE.SphereGeometry(0.09, 10, 8);
   const grenadeMat = new THREE.MeshStandardMaterial({ color: 0x2a2723, roughness: 0.5, metalness: 0.6 });
 

@@ -6,8 +6,10 @@ export function createAudio() {
   let ctx = null;
   let master = null;
   let noiseBuffer = null;
+  let unlocked = false; // set on the first user gesture; until then no context exists
 
   function ensure() {
+    if (!unlocked) return false;
     if (ctx) {
       if (ctx.state === 'suspended') ctx.resume();
       return true;
@@ -67,6 +69,7 @@ export function createAudio() {
 
   return {
     unlock() {
+      unlocked = true;
       ensure();
     },
     shot(kind, distance) {
