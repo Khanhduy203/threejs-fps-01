@@ -221,7 +221,15 @@ export function createCombat(scene, world, random, audio) {
   // Returns the hit, if any, with the damage already falloff-scaled.
   function playerShoot(origin, dir, def, shootables) {
     raycaster.set(origin, dir);
-    const hit = raycaster.intersectObjects(shootables, false)[0];
+    // The nearest hit wins, but a fallen bot's corpse never stops a bullet.
+    const hits = raycaster.intersectObjects(shootables, false);
+    let hit = null;
+    for (const candidate of hits) {
+      const candidateBot = candidate.object.userData.bot;
+      if (candidateBot && !candidateBot.alive) continue;
+      hit = candidate;
+      break;
+    }
     if (!hit) {
       tmpPoint.copy(origin).addScaledVector(dir, 60);
       spawnTracer(origin, tmpPoint, false);

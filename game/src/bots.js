@@ -95,6 +95,7 @@ export function createBots(scene, world, random) {
       burstPauseUntil: 0,
       strafeDir: 1,
       strafeUntil: 0,
+      strafeAnchor: null, // where the fight started; strafing never drifts far from it
       perceiveAt: random() * 0.1,
       modeAt: random() * 0.25,
       walkPhase: random() * 6,
@@ -244,9 +245,14 @@ export function createBots(scene, world, random) {
     const state = ctx.state;
     const bomb = state.bomb;
     if (bot.target) {
+      // Entering a fight anchors the strafe: the dodge stays local, so a
+      // holding bot never drifts sideways into a sightline it should not have
+      // (down mid, around the container, to the attacker spawn).
+      if (bot.mode !== 'engage') bot.strafeAnchor = { x: bot.position.x, z: bot.position.z };
       bot.mode = 'engage';
       return;
     }
+    bot.strafeAnchor = null;
     if (bomb.state === 'planted') {
       if (bot.team === TEAMS.WARDEN) {
         const d = Math.hypot(bomb.x - bot.position.x, bomb.z - bot.position.z);
@@ -399,7 +405,9 @@ export function createBots(scene, world, random) {
       }
       if (bot.mode === 'engage' && bot.target) {
         faceToward(bot, bot.targetPos.x, bot.targetPos.z, dt, 7);
-        // Strafe sideways while fighting, flipping direction on a timer.
+        // Strafe sideways while fighting, flipping direction on a timer —
+        // and flipping back toward the anchor past ~2 m, so the dodge never
+        // becomes a reposition.
         if (ctx.elapsed >= bot.strafeUntil) {
           bot.strafeDir = random() < 0.5 ? -1 : 1;
           bot.strafeUntil = ctx.elapsed + 0.5 + random() * 0.5;
@@ -407,6 +415,15 @@ export function createBots(scene, world, random) {
         const dx = bot.targetPos.x - bot.position.x;
         const dz = bot.targetPos.z - bot.position.z;
         const len = Math.hypot(dx, dz) || 1;
+        if (bot.strafeAnchor) {
+          const ax = bot.position.x - bot.strafeAnchor.x;
+          const az = bot.position.z - bot.strafeAnchor.z;
+          if (ax * ax + az * az > 4.8) {
+            const px = (-dz / len) * bot.strafeDir;
+            const pz = (dx / len) * bot.strafeDir;
+            if (px * ax + pz * az > 0) bot.strafeDir *= -1;
+          }
+        }
         const px = (-dz / len) * bot.strafeDir;
         const pz = (dx / len) * bot.strafeDir;
         const nx = bot.position.x + px * STRAFE_SPEED * dt;
