@@ -66,6 +66,7 @@ export function createHud(callbacks) {
   const hintBar = el('hint-bar');
   const minimap = el('minimap');
   const mapCtx = minimap.getContext('2d');
+  const hudRoot = el('hud');
 
   let last = {};
   let hitTimer = 0;
@@ -128,6 +129,12 @@ export function createHud(callbacks) {
   }
 
   return {
+    // The menu and match-end screens stand alone; the HUD hides behind them.
+    setVisible(visible) {
+      if (last.visible === visible) return;
+      last.visible = visible;
+      hudRoot.style.visibility = visible ? 'visible' : 'hidden';
+    },
     setHealth(health, armour) {
       setText(healthValue, String(Math.ceil(health)), 'health');
       if (last.healthBar !== health) {

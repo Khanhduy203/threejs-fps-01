@@ -141,7 +141,6 @@ export function createBots(scene, world, random) {
   function resetRound(round) {
     plan.site = random() < 0.55 ? 'A' : 'B';
     const siteNode = SITES[plan.site].node;
-    const otherSite = plan.site === 'A' ? 'B' : 'A';
     for (const bot of list) {
       const spawn = SPAWNS[bot.team === TEAMS.STRIKE ? 'strike' : 'warden'][bot.spawnIndex];
       bot.position.set(spawn[0], 0, spawn[1]);
@@ -475,9 +474,6 @@ export function createBots(scene, world, random) {
     damage,
     alert,
     aliveCount,
-    plan() {
-      return plan;
-    },
   };
 }
 

@@ -688,7 +688,7 @@ function runShot(name) {
     state.freeze = false;
     weapons.buy('rifle');
     weapons.state.grenades = 1;
-    body.position.set(0, 0, 10);
+    body.position.set(0, 0, 5);
     body.yaw = 0;
     settle(360);
     const enemy = bots.list

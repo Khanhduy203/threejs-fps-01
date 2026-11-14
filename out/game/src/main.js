@@ -10,7 +10,7 @@ import { createState, resetMatch, resetRound, announce, feed, MATCH, TEAMS, TEAM
 import { createWorld, SITES, SPAWNS } from './world.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
-import { createWeapons, WEAPONS } from './weapons.js';
+import { createWeapons } from './weapons.js';
 import { createBots } from './bots.js';
 import { createCombat } from './combat.js';
 import { createBomb } from './bomb.js';
@@ -68,6 +68,7 @@ const aimPoint = new THREE.Vector3();
 const hud = createHud({
   onPlay() {
     audio.unlock();
+    audio.click();
     if (state.phase === 'menu' || state.phase === 'matchEnd') startMatch();
     else input.requestLock();
   },
@@ -81,6 +82,7 @@ const hud = createHud({
   },
   onDeploy() {
     audio.unlock();
+    audio.click();
     closeBuyMenu();
     input.requestLock();
   },
@@ -519,6 +521,7 @@ function syncCamera() {
 }
 
 function syncHud() {
+  hud.setVisible(state.phase !== 'menu' && state.phase !== 'matchEnd');
   const slot = weapons.currentSlot();
   hud.setHealth(body.health, body.armour);
   hud.setAmmo(slot.mag, slot.reserve, slot.def.name, weapons.state.reloadLeft > 0);
@@ -667,8 +670,10 @@ function runShot(name) {
     state.bomb.x = SITES.A.x;
     state.bomb.z = SITES.A.z;
     bomb.dropAt(SITES.A.x, SITES.A.z);
-    body.position.set(-17, 0, -6);
+    body.position.set(-13, 0, -3);
     settle(20);
+    aimPoint.set(SITES.A.x, 1.2, SITES.A.z);
+    aimAt(aimPoint);
     finishMatch();
   } else {
     // 'play': mid-round, rifle in hand, an enemy in the sights.
@@ -683,7 +688,7 @@ function runShot(name) {
     state.freeze = false;
     weapons.buy('rifle');
     weapons.state.grenades = 1;
-    body.position.set(0, 0, 10);
+    body.position.set(0, 0, 5);
     body.yaw = 0;
     settle(360);
     const enemy = bots.list
@@ -718,5 +723,8 @@ window.addEventListener('resize', () => {
 bots.resetRound(1);
 syncCamera();
 syncHud();
+// A read hook for automated playtests (and curious players): the live match
+// state, the player and the bots. The game never reads it back.
+window.__sandline = { state, player, bots, weapons, world };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

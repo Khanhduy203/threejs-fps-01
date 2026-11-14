@@ -58,7 +58,7 @@ export function createWorld(scene) {
   const shootables = [];
   const minimapWalls = []; // [x, z, w, d] rectangles for the HUD minimap
 
-  function box(width, height, depth, x, y, z, material, collide = true) {
+  function box(width, height, depth, x, y, z, material, collide = true, onMap = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materials[material]);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
@@ -67,15 +67,16 @@ export function createWorld(scene) {
     if (collide) {
       colliders.push(new THREE.Box3().setFromObject(mesh));
       shootables.push(mesh);
-      minimapWalls.push([x, z, width, depth]);
+      if (onMap) minimapWalls.push([x, z, width, depth]);
     }
     return mesh;
   }
 
-  // Ground: packed sand with a darker concrete apron at each site.
-  box(64.4, 0.4, 48.4, 0, -0.2, 0, 'sand');
-  box(12, 0.1, 10, SITES.A.x, 0.03, SITES.A.z, 'surface');
-  box(12, 0.1, 10, SITES.B.x, 0.03, SITES.B.z, 'surface');
+  // Ground: packed sand with a darker concrete apron at each site. The ground
+  // and aprons stay off the minimap, or the map would be one solid rectangle.
+  box(64.4, 0.4, 48.4, 0, -0.2, 0, 'sand', true, false);
+  box(12, 0.1, 10, SITES.A.x, 0.03, SITES.A.z, 'surface', true, false);
+  box(12, 0.1, 10, SITES.B.x, 0.03, SITES.B.z, 'surface', true, false);
 
   // Perimeter walls, 5 m, open to the dusk sky.
   box(0.6, 5, 48.4, -32.2, 2.5, 0, 'surface');
@@ -114,8 +115,10 @@ export function createWorld(scene) {
   container(27, -13, true, 'containerB');
   box(2.4, 2.6, 6, 27, 3.9, -13, 'containerA');
   container(20, -21, false, 'containerC');
-  // Defender spawn cover and a mid sight-blocker.
-  container(-6, -22, false, 'containerC');
+  // A tall container across mid at z=8: it breaks the sightline from the
+  // defender mid hold all the way to the attacker spawn, so nobody spawn-camps
+  // down the middle — attackers are covered until they pass it.
+  container(0, 8, false, 'containerB');
   container(6, -22, false, 'containerD');
   container(0, -16, false, 'containerA');
 
