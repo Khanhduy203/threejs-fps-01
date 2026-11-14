@@ -86,9 +86,9 @@ export function createBots(scene, world, random) {
       pathIndex: 0,
       holdNode: -1,
       holdYaw: 0,
-      target: null, // { kind: 'player' } | { kind: 'bot', bot }
+      target: null, // the reused targetDesc below while an enemy is visible
+      targetDesc: { kind: null, bot: null },
       targetPos: new THREE.Vector3(),
-      lastSeen: null, // { x, z, at }
       reaction: 0,
       burstLeft: 0,
       nextShotAt: 0,
@@ -155,7 +155,6 @@ export function createBots(scene, world, random) {
       bot.path = [];
       bot.pathIndex = 0;
       bot.target = null;
-      bot.lastSeen = null;
       bot.reaction = 0;
       bot.burstLeft = 0;
       bot.investigate = null;
@@ -195,7 +194,10 @@ export function createBots(scene, world, random) {
 
   function perceive(bot, ctx) {
     // Nearest visible enemy wins; the player counts like any other enemy.
-    let best = null;
+    // The target descriptor is reused, never reallocated: perception runs
+    // ten times a second per bot.
+    let bestKind = null;
+    let bestBot = null;
     let bestDist = Infinity;
     if (ctx.playerAlive) {
       const p = ctx.playerPos;
@@ -203,7 +205,8 @@ export function createBots(scene, world, random) {
       const d = canSee(bot, p.x, chestY, p.z);
       if (d > 0 && d < bestDist) {
         bestDist = d;
-        best = { kind: 'player' };
+        bestKind = 'player';
+        bestBot = null;
       }
     }
     for (const other of list) {
@@ -211,21 +214,24 @@ export function createBots(scene, world, random) {
       const d = canSee(bot, other.position.x, other.position.y + CHEST_HEIGHT, other.position.z);
       if (d > 0 && d < bestDist) {
         bestDist = d;
-        best = { kind: 'bot', bot: other };
+        bestKind = 'bot';
+        bestBot = other;
       }
     }
-    if (best) {
-      const pos = best.kind === 'player' ? ctx.playerPos : best.bot.position;
-      const isNew = !bot.target || bot.target.kind !== best.kind || (best.kind === 'bot' && bot.target.bot !== best.bot);
+    if (bestKind) {
+      const pos = bestKind === 'player' ? ctx.playerPos : bestBot.position;
+      const isNew = !bot.target || bot.target.kind !== bestKind || bot.target.bot !== bestBot;
       if (isNew) bot.reaction = 0.35 + random() * 0.3;
-      bot.target = best;
+      bot.targetDesc.kind = bestKind;
+      bot.targetDesc.bot = bestBot;
+      bot.target = bot.targetDesc;
       bot.targetPos.set(pos.x, pos.y, pos.z);
-      bot.lastSeen = { x: pos.x, z: pos.z, at: ctx.elapsed };
-      if (best.kind === 'bot') ctx.state.spotted.set(best.bot.id, ctx.elapsed);
+      if (bestKind === 'bot') ctx.state.spotted.set(bestBot.id, ctx.elapsed);
       bot.investigate = null;
     } else if (bot.target) {
-      // Lost sight: keep hunting the last seen spot for a few seconds.
+      // Lost sight: go and check the last place the target was seen.
       bot.target = null;
+      bot.investigate = { x: bot.targetPos.x, z: bot.targetPos.z };
     }
     // Hearing: a recent enemy shot nearby, with no target, is worth a look.
     if (!bot.target && !bot.investigate) {
@@ -476,10 +482,9 @@ export function createBots(scene, world, random) {
     return true;
   }
 
-  // A hit from somewhere the bot cannot see: turn toward it and go look.
+  // A hit from somewhere the bot cannot see: go and look.
   function alert(bot, x, z) {
     if (!bot.alive) return;
-    bot.lastSeen = { x, z, at: nowSeconds };
     if (!bot.target) bot.investigate = { x, z };
   }
 

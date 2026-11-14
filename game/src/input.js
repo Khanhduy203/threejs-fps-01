@@ -73,12 +73,13 @@ export function createInput(canvas, onLockChange) {
     releaseLock() {
       if (document.pointerLockElement) document.exitPointerLock();
     },
-    takeLook() {
-      const x = state.lookX;
-      const y = state.lookY;
+    takeLook(target) {
+      // Writes into the caller's object: the frame loop runs 60 times a
+      // second, so it allocates nothing here.
+      target.x = state.lookX;
+      target.y = state.lookY;
       state.lookX = 0;
       state.lookY = 0;
-      return { x, y };
     },
     // Called once per rendered frame after the simulation has read the presses.
     endFrame() {
