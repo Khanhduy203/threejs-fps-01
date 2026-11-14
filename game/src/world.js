@@ -115,8 +115,10 @@ export function createWorld(scene) {
   container(27, -13, true, 'containerB');
   box(2.4, 2.6, 6, 27, 3.9, -13, 'containerA');
   container(20, -21, false, 'containerC');
-  // Defender spawn cover and a mid sight-blocker.
-  container(-6, -22, false, 'containerC');
+  // A tall container across mid at z=8: it breaks the sightline from the
+  // defender mid hold all the way to the attacker spawn, so nobody spawn-camps
+  // down the middle — attackers are covered until they pass it.
+  container(0, 8, false, 'containerB');
   container(6, -22, false, 'containerD');
   container(0, -16, false, 'containerA');
 
