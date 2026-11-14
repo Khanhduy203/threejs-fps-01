@@ -267,7 +267,8 @@ function onBotDeath(bot, killer, part) {
     state.kills += 1;
     economy.killReward();
   }
-  if (bot.hasBomb || (state.bomb.state === 'carried' && state.bomb.carrier === bot.id)) {
+  // Only a carried bomb drops; a planted bomb stays in the ground.
+  if (state.bomb.state === 'carried' && (bot.hasBomb || state.bomb.carrier === bot.id)) {
     bot.hasBomb = false;
     dropBombAt(bot.position.x, bot.position.z);
   }
@@ -725,6 +726,6 @@ syncCamera();
 syncHud();
 // A read hook for automated playtests (and curious players): the live match
 // state, the player and the bots. The game never reads it back.
-window.__sandline = { state, player, bots, weapons, world };
+window.__sandline = { state, player, bots, weapons, combat, world };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

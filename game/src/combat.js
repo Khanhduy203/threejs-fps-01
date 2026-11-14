@@ -344,5 +344,8 @@ export function createCombat(scene, world, random, audio) {
     explosion,
     update,
     reset,
+    activeGrenades() {
+      return grenades.length;
+    },
   };
 }
