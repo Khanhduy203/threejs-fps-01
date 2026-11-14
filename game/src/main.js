@@ -10,7 +10,7 @@ import { createState, resetMatch, resetRound, announce, feed, MATCH, TEAMS, TEAM
 import { createWorld, SITES, SPAWNS } from './world.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
-import { createWeapons, WEAPONS } from './weapons.js';
+import { createWeapons } from './weapons.js';
 import { createBots } from './bots.js';
 import { createCombat } from './combat.js';
 import { createBomb } from './bomb.js';
@@ -68,6 +68,7 @@ const aimPoint = new THREE.Vector3();
 const hud = createHud({
   onPlay() {
     audio.unlock();
+    audio.click();
     if (state.phase === 'menu' || state.phase === 'matchEnd') startMatch();
     else input.requestLock();
   },
@@ -81,6 +82,7 @@ const hud = createHud({
   },
   onDeploy() {
     audio.unlock();
+    audio.click();
     closeBuyMenu();
     input.requestLock();
   },

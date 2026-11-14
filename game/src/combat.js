@@ -344,6 +344,5 @@ export function createCombat(scene, world, random, audio) {
     explosion,
     update,
     reset,
-    spawnParticles,
   };
 }
