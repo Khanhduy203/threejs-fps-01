@@ -78,6 +78,13 @@ export function createBomb(scene, audio) {
             bomb.site = site;
             bomb.x = site === 'A' ? SITES.A.x : SITES.B.x;
             bomb.z = site === 'A' ? SITES.A.z : SITES.B.z;
+            // The bomb is in the ground now: nobody carries it, so the
+            // planter's death can no longer drop it.
+            if (bomb.carrier && bomb.carrier !== 'player') {
+              const carrier = ctx.bots.find((b) => b.id === bomb.carrier);
+              if (carrier) carrier.hasBomb = false;
+            }
+            bomb.carrier = null;
             state.timer = MATCH.bombTime;
             setVisibleAt(bomb.x, bomb.z);
             audio.plant();

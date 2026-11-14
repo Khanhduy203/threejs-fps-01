@@ -53,6 +53,7 @@ export function createCombat(scene, world, random, audio) {
   const tmpMin = new THREE.Vector3();
   const tmpMax = new THREE.Vector3();
   const tmpPoint = new THREE.Vector3();
+  const tmpEnd = new THREE.Vector3();
 
   // Tracer pool: lines reused, never allocated mid-frame.
   const tracers = [];
@@ -221,7 +222,15 @@ export function createCombat(scene, world, random, audio) {
   // Returns the hit, if any, with the damage already falloff-scaled.
   function playerShoot(origin, dir, def, shootables) {
     raycaster.set(origin, dir);
-    const hit = raycaster.intersectObjects(shootables, false)[0];
+    // The nearest hit wins, but a fallen bot's corpse never stops a bullet.
+    const hits = raycaster.intersectObjects(shootables, false);
+    let hit = null;
+    for (const candidate of hits) {
+      const candidateBot = candidate.object.userData.bot;
+      if (candidateBot && !candidateBot.alive) continue;
+      hit = candidate;
+      break;
+    }
     if (!hit) {
       tmpPoint.copy(origin).addScaledVector(dir, 60);
       spawnTracer(origin, tmpPoint, false);
@@ -233,10 +242,10 @@ export function createCombat(scene, world, random, audio) {
       const part = hit.object.userData.part;
       const amount = Math.round(falloff(def.damage, hit.distance, def.falloff) * (part === 'head' ? def.headMult : 1));
       spawnParticles(hit.point, 5, sparkMat, 3, 0.4);
-      return { bot, part, amount, distance: hit.distance, point: hit.point.clone() };
+      return { bot, part, amount, distance: hit.distance };
     }
     spawnParticles(hit.point, 4, dustMat, 2.5, 0.5);
-    return { wall: true, distance: hit.distance, point: hit.point.clone() };
+    return { wall: true, distance: hit.distance };
   }
 
   // A bot's shot: an aim point with an error that grows with range and target
@@ -267,7 +276,8 @@ export function createCombat(scene, world, random, audio) {
     aimZ += (random() - 0.5) * 2 * error;
     direction.set(aimX - eye.x, aimY - eye.y, aimZ - eye.z).normalize();
     if (world.losBlocked(eye.x, eye.y, eye.z, aimX, aimY, aimZ)) {
-      spawnTracer(eye, direction.clone().multiplyScalar(Math.min(dist, 40)).add(eye), true);
+      tmpEnd.copy(eye).addScaledVector(direction, Math.min(dist, 40));
+      spawnTracer(eye, tmpEnd, true);
       return null;
     }
     // Body boxes: torso and head, crouched or standing.
@@ -294,7 +304,7 @@ export function createCombat(scene, world, random, audio) {
       part = 'torso';
       hitDist = torsoHit;
     }
-    const end = new THREE.Vector3().copy(eye).addScaledVector(direction, part ? hitDist : Math.min(dist + 8, 60));
+    const end = tmpEnd.copy(eye).addScaledVector(direction, part ? hitDist : Math.min(dist + 8, 60));
     spawnTracer(eye, end, true);
     if (!part) return null;
     const amount = Math.round(falloff(BOT_DAMAGE, hitDist, 25) * (part === 'head' ? 2 : 1));
@@ -344,5 +354,8 @@ export function createCombat(scene, world, random, audio) {
     explosion,
     update,
     reset,
+    activeGrenades() {
+      return grenades.length;
+    },
   };
 }

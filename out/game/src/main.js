@@ -64,6 +64,17 @@ let lastTime = performance.now();
 
 const direction = new THREE.Vector3();
 const aimPoint = new THREE.Vector3();
+const lookDelta = { x: 0, y: 0 };
+// The teammate panel rebuilds only when a health or alive flag actually changes;
+// the comparison is six numbers, so the frame loop allocates nothing for it.
+const strikeBots = bots.list.filter((b) => b.team === TEAMS.STRIKE);
+let lastH0 = -1;
+let lastH1 = -1;
+let lastH2 = -1;
+let lastA0 = false;
+let lastA1 = false;
+let lastA2 = false;
+let buyKey = '';
 
 const hud = createHud({
   onPlay() {
@@ -106,6 +117,9 @@ function onLockChange(locked) {
 
 function openBuyMenu() {
   if (state.phase !== 'buy') return;
+  // The menu is clicked with a free mouse: release the pointer lock first,
+  // or it stays held over from the previous round and the menu cannot be used.
+  input.releaseLock();
   buyMenuOpen = true;
   hud.showBuy(true);
   refreshBuyMenu();
@@ -117,6 +131,7 @@ function closeBuyMenu() {
 }
 
 function refreshBuyMenu() {
+  buyKey = `${state.money}|${weapons.state.grenades}|${body.armour}|${weapons.state.owned.length}`;
   hud.refreshBuy(
     state.money,
     weapons.state.owned.map((slot) => slot.def.id),
@@ -267,7 +282,8 @@ function onBotDeath(bot, killer, part) {
     state.kills += 1;
     economy.killReward();
   }
-  if (bot.hasBomb || (state.bomb.state === 'carried' && state.bomb.carrier === bot.id)) {
+  // Only a carried bomb drops; a planted bomb stays in the ground.
+  if (state.bomb.state === 'carried' && (bot.hasBomb || state.bomb.carrier === bot.id)) {
     bot.hasBomb = false;
     dropBombAt(bot.position.x, bot.position.z);
   }
@@ -531,10 +547,22 @@ function syncHud() {
   else hud.setTimer(state.timer, state.bomb.state === 'planted' ? 'BOMB' : 'ROUND');
   hud.setScore(state.score[0], state.score[1], state.round, MATCH.maxRounds);
   hud.setPips(strikeAlive(), wardenAlive());
-  hud.setTeammates([
-    { name: 'YOU', health: body.health, alive: body.alive },
-    ...bots.list.filter((b) => b.team === TEAMS.STRIKE).map((b) => ({ name: b.name, health: b.health, alive: b.alive })),
-  ]);
+  const h0 = Math.ceil(body.health);
+  const h1 = Math.ceil(strikeBots[0].health);
+  const h2 = Math.ceil(strikeBots[1].health);
+  if (h0 !== lastH0 || h1 !== lastH1 || h2 !== lastH2 || body.alive !== lastA0 || strikeBots[0].alive !== lastA1 || strikeBots[1].alive !== lastA2) {
+    lastH0 = h0;
+    lastH1 = h1;
+    lastH2 = h2;
+    lastA0 = body.alive;
+    lastA1 = strikeBots[0].alive;
+    lastA2 = strikeBots[1].alive;
+    hud.setTeammates([
+      { name: 'YOU', health: body.health, alive: body.alive },
+      { name: strikeBots[0].name, health: strikeBots[0].health, alive: strikeBots[0].alive },
+      { name: strikeBots[1].name, health: strikeBots[1].health, alive: strikeBots[1].alive },
+    ]);
+  }
   const bombText =
     state.bomb.state === 'planted'
       ? `BOMB PLANTED — SITE ${state.bomb.site}`
@@ -573,7 +601,10 @@ function syncHud() {
   } else {
     hud.setProgress('', 0);
   }
-  if (buyMenuOpen) refreshBuyMenu();
+  if (buyMenuOpen) {
+    const key = `${state.money}|${weapons.state.grenades}|${body.armour}|${weapons.state.owned.length}`;
+    if (key !== buyKey) refreshBuyMenu();
+  }
 }
 
 function frame(now) {
@@ -581,7 +612,8 @@ function frame(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
   if (!frozen) {
-    const look = input.takeLook();
+    input.takeLook(lookDelta);
+    const look = lookDelta;
     const aiming = input.state.aiming && body.alive;
     const sensitivity = aiming ? (weapons.currentDef().id === 'sniper' ? 0.35 : 0.6) : 1;
     if (input.state.locked) player.look(look.x * sensitivity, look.y * sensitivity);
@@ -725,6 +757,6 @@ syncCamera();
 syncHud();
 // A read hook for automated playtests (and curious players): the live match
 // state, the player and the bots. The game never reads it back.
-window.__sandline = { state, player, bots, weapons, world };
+window.__sandline = { state, player, bots, weapons, combat, world };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);
