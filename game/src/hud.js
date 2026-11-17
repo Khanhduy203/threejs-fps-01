@@ -4,78 +4,44 @@
 // when its value changed. The minimap is a 2D canvas redrawn at 10 Hz.
 import { SHOP } from './economy.js';
 
-const COPY = {
-  start: {
-    title: 'SANDLINE',
-    copy: 'Depot 9, dusk. STRIKE attacks, WARDEN defends. Plant the bomb at A or B, or wipe the defence out — first to 5 rounds takes the match.',
-    action: 'Deploy',
-  },
-  paused: {
-    title: 'SANDLINE',
-    copy: 'Paused. Your team holds position.',
-    action: 'Resume',
-  },
-  matchEnd: {
-    title: '',
-    copy: '',
-    action: 'Play again',
-  },
-};
+// Overlay copy, as [mode, title, body, button] rows; the match-end screen
+// fills its title and body in from the result instead.
+const OVERLAY_COPY = [
+  [
+    'start',
+    'SANDLINE',
+    'Depot 9, dusk. STRIKE attacks, WARDEN defends. Plant the bomb at A or B, or wipe the defence out — first to 5 rounds takes the match.',
+    'Deploy',
+  ],
+  ['paused', 'SANDLINE', 'Paused. Your team holds position.', 'Resume'],
+  ['matchEnd', '', '', 'Play again'],
+];
+const COPY = {};
+for (const [mode, title, copy, action] of OVERLAY_COPY) COPY[mode] = { title, copy, action };
 
 export function createHud(callbacks) {
-  const el = (id) => document.getElementById(id);
-  const overlay = el('overlay');
-  const overlayTitle = el('overlay-title');
-  const overlayCopy = el('overlay-copy');
-  const playButton = el('play');
-  const crosshair = el('crosshair');
-  const hitmarker = el('hitmarker');
-  const healthValue = el('health-value');
-  const healthBar = el('health-bar');
-  const armourValue = el('armour-value');
-  const ammoMag = el('ammo-mag');
-  const ammoReserve = el('ammo-reserve');
-  const weaponName = el('weapon-name');
-  const reloadHint = el('reload-hint');
-  const moneyValue = el('money-value');
-  const grenadeValue = el('grenade-value');
-  const timerValue = el('timer-value');
-  const timerLabel = el('timer-label');
-  const scoreStrike = el('score-strike');
-  const scoreWarden = el('score-warden');
-  const roundValue = el('round-value');
-  const pipsStrike = el('pips-strike');
-  const pipsWarden = el('pips-warden');
-  const teammates = el('teammates');
-  const feedList = el('feed');
-  const announceBox = el('announce');
-  const announceTitle = el('announce-title');
-  const announceSub = el('announce-sub');
-  const progressWrap = el('progress-wrap');
-  const progressLabel = el('progress-label');
-  const progressBar = el('progress-bar');
-  const bombStatus = el('bomb-status');
-  const vignette = el('vignette');
-  const damageDir = el('damage-dir');
-  const deathNotice = el('death-notice');
-  const scopeOverlay = el('scope');
-  const buyMenu = el('buy-menu');
-  const buyMoney = el('buy-money');
-  const buyRows = el('buy-rows');
-  const buyNote = el('buy-note');
-  const hintBar = el('hint-bar');
-  const minimap = el('minimap');
-  const mapCtx = minimap.getContext('2d');
-  const hudRoot = el('hud');
+  const ids = [
+    'overlay', 'overlay-title', 'overlay-copy', 'play', 'crosshair', 'hitmarker',
+    'health-value', 'health-bar', 'armour-value', 'ammo-mag', 'ammo-reserve',
+    'weapon-name', 'reload-hint', 'money-value', 'grenade-value', 'timer-value',
+    'timer-label', 'score-strike', 'score-warden', 'round-value', 'pips-strike',
+    'pips-warden', 'teammates', 'feed', 'announce', 'announce-title', 'announce-sub',
+    'progress-wrap', 'progress-label', 'progress-bar', 'bomb-status', 'vignette',
+    'damage-dir', 'death-notice', 'scope', 'buy-menu', 'buy-money', 'buy-rows',
+    'buy-note', 'hint-bar', 'minimap', 'hud',
+  ];
+  const nodes = {};
+  for (const id of ids) nodes[id] = document.getElementById(id);
+  const mapCtx = nodes.minimap.getContext('2d');
 
-  let last = {};
+  const seen = {};
   let hitTimer = 0;
   let announceTimer = 0;
   let vignetteTimer = 0;
 
   function setText(node, value, key) {
-    if (last[key] === value) return;
-    last[key] = value;
+    if (seen[key] === value) return;
+    seen[key] = value;
     node.textContent = value;
   }
 
@@ -86,16 +52,29 @@ export function createHud(callbacks) {
     row.type = 'button';
     row.className = 'buy-row';
     row.dataset.item = item.id;
-    row.innerHTML = `<span class="buy-key">${item.key}</span><span class="buy-item"><b>${item.name}</b><i>${item.detail}</i></span><span class="buy-price">$${item.price}</span>`;
+    const key = document.createElement('span');
+    key.className = 'buy-key';
+    key.textContent = item.key;
+    const label = document.createElement('span');
+    label.className = 'buy-item';
+    const name = document.createElement('b');
+    name.textContent = item.name;
+    const detail = document.createElement('i');
+    detail.textContent = item.detail;
+    label.append(name, detail);
+    const price = document.createElement('span');
+    price.className = 'buy-price';
+    price.textContent = `$${item.price}`;
+    row.append(key, label, price);
     row.addEventListener('click', () => callbacks.onBuy(item.id));
-    buyRows.appendChild(row);
+    nodes['buy-rows'].appendChild(row);
   }
-  el('deploy').addEventListener('click', () => callbacks.onDeploy());
-  playButton.addEventListener('click', () => callbacks.onPlay());
+  document.getElementById('deploy').addEventListener('click', () => callbacks.onDeploy());
+  nodes.play.addEventListener('click', () => callbacks.onPlay());
 
   function refreshBuy(money, ownedIds, grenades, armour) {
-    setText(buyMoney, `$${money}`, 'buyMoney');
-    for (const row of buyRows.children) {
+    setText(nodes['buy-money'], `$${money}`, 'buyMoney');
+    for (const row of nodes['buy-rows'].children) {
       const item = SHOP.find((entry) => entry.id === row.dataset.item);
       let disabled = money < item.price;
       let note = '';
@@ -116,10 +95,10 @@ export function createHud(callbacks) {
     }
   }
 
-  function setPips(node, alive, total, key) {
+  function paintPips(node, alive, total, key) {
     const value = `${alive}/${total}`;
-    if (last[key] === value) return;
-    last[key] = value;
+    if (seen[key] === value) return;
+    seen[key] = value;
     node.innerHTML = '';
     for (let i = 0; i < total; i += 1) {
       const pip = document.createElement('i');
@@ -128,152 +107,164 @@ export function createHud(callbacks) {
     }
   }
 
+  function teammateRow(member) {
+    const row = document.createElement('div');
+    row.className = `mate${member.alive ? '' : ' dead'}`;
+    const name = document.createElement('span');
+    name.textContent = member.name;
+    const track = document.createElement('span');
+    track.className = 'mate-bar';
+    const fill = document.createElement('i');
+    fill.style.width = `${Math.max(0, member.health)}%`;
+    track.appendChild(fill);
+    const hp = document.createElement('b');
+    hp.textContent = member.alive ? String(Math.ceil(member.health)) : '✕';
+    row.append(name, track, hp);
+    return row;
+  }
+
   return {
     // The menu and match-end screens stand alone; the HUD hides behind them.
     setVisible(visible) {
-      if (last.visible === visible) return;
-      last.visible = visible;
-      hudRoot.style.visibility = visible ? 'visible' : 'hidden';
+      if (seen.visible === visible) return;
+      seen.visible = visible;
+      nodes.hud.style.visibility = visible ? 'visible' : 'hidden';
     },
     setHealth(health, armour) {
-      setText(healthValue, String(Math.ceil(health)), 'health');
-      if (last.healthBar !== health) {
-        last.healthBar = health;
-        healthBar.style.width = `${Math.max(0, health)}%`;
-        healthBar.classList.toggle('low', health <= 30);
+      setText(nodes['health-value'], String(Math.ceil(health)), 'health');
+      if (seen.healthBar !== health) {
+        seen.healthBar = health;
+        nodes['health-bar'].style.width = `${Math.max(0, health)}%`;
+        nodes['health-bar'].classList.toggle('low', health <= 30);
       }
-      setText(armourValue, armour > 0 ? `+${armour}` : '', 'armour');
+      setText(nodes['armour-value'], armour > 0 ? `+${armour}` : '', 'armour');
     },
     setAmmo(mag, reserve, name, reloading) {
-      setText(ammoMag, String(mag), 'mag');
-      setText(ammoReserve, `/ ${reserve}`, 'reserve');
-      setText(weaponName, name, 'weaponName');
+      setText(nodes['ammo-mag'], String(mag), 'mag');
+      setText(nodes['ammo-reserve'], `/ ${reserve}`, 'reserve');
+      setText(nodes['weapon-name'], name, 'weaponName');
       const show = mag === 0 && reserve > 0;
-      if (last.reloadHint !== show) {
-        last.reloadHint = show;
-        reloadHint.hidden = !show;
+      if (seen.reloadHint !== show) {
+        seen.reloadHint = show;
+        nodes['reload-hint'].hidden = !show;
       }
-      el('ammo').classList.toggle('empty', mag === 0);
-      el('ammo').classList.toggle('reloading', reloading);
+      const ammoBlock = document.getElementById('ammo');
+      ammoBlock.classList.toggle('empty', mag === 0);
+      ammoBlock.classList.toggle('reloading', reloading);
     },
     setMoney(money) {
-      setText(moneyValue, `$${money}`, 'money');
+      setText(nodes['money-value'], `$${money}`, 'money');
     },
     setGrenades(count) {
-      setText(grenadeValue, count > 0 ? `◉ ${count}` : '', 'grenades');
+      setText(nodes['grenade-value'], count > 0 ? `◉ ${count}` : '', 'grenades');
     },
     setTimer(seconds, label) {
       const total = Math.max(0, Math.ceil(seconds));
       const text = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-      setText(timerValue, text, 'timer');
-      setText(timerLabel, label, 'timerLabel');
-      timerValue.classList.toggle('urgent', label === 'BOMB' || total <= 10);
+      setText(nodes['timer-value'], text, 'timer');
+      setText(nodes['timer-label'], label, 'timerLabel');
+      nodes['timer-value'].classList.toggle('urgent', label === 'BOMB' || total <= 10);
     },
     setScore(strike, warden, round, maxRounds) {
-      setText(scoreStrike, String(strike), 'scoreS');
-      setText(scoreWarden, String(warden), 'scoreW');
-      setText(roundValue, `ROUND ${round}/${maxRounds}`, 'round');
+      setText(nodes['score-strike'], String(strike), 'scoreS');
+      setText(nodes['score-warden'], String(warden), 'scoreW');
+      setText(nodes['round-value'], `ROUND ${round}/${maxRounds}`, 'round');
     },
     setPips(strikeAlive, wardenAlive) {
-      setPips(pipsStrike, strikeAlive, 3, 'pipsS');
-      setPips(pipsWarden, wardenAlive, 3, 'pipsW');
+      paintPips(nodes['pips-strike'], strikeAlive, 3, 'pipsS');
+      paintPips(nodes['pips-warden'], wardenAlive, 3, 'pipsW');
     },
     setTeammates(members) {
       const key = members.map((m) => `${m.name}:${Math.ceil(m.health)}:${m.alive ? 1 : 0}`).join('|');
-      if (last.teammates === key) return;
-      last.teammates = key;
-      teammates.innerHTML = '';
-      for (const m of members) {
-        const row = document.createElement('div');
-        row.className = `mate${m.alive ? '' : ' dead'}`;
-        row.innerHTML = `<span>${m.name}</span><span class="mate-bar"><i style="width:${Math.max(0, m.health)}%"></i></span><b>${m.alive ? Math.ceil(m.health) : '✕'}</b>`;
-        teammates.appendChild(row);
-      }
+      if (seen.teammates === key) return;
+      seen.teammates = key;
+      nodes.teammates.innerHTML = '';
+      for (const m of members) nodes.teammates.appendChild(teammateRow(m));
     },
     setBombStatus(text) {
-      setText(bombStatus, text, 'bombStatus');
+      setText(nodes['bomb-status'], text, 'bombStatus');
     },
     setHint(text) {
-      setText(hintBar, text, 'hint');
+      setText(nodes['hint-bar'], text, 'hint');
     },
     setCrosshair(spreadPx, aiming, sniper) {
       const gap = Math.round(Math.min(42, Math.max(5, 5 + spreadPx)));
-      if (last.gap !== gap) {
-        last.gap = gap;
-        crosshair.style.setProperty('--gap', `${gap}px`);
+      if (seen.gap !== gap) {
+        seen.gap = gap;
+        nodes.crosshair.style.setProperty('--gap', `${gap}px`);
       }
-      crosshair.classList.toggle('hidden', aiming && sniper);
-      scopeOverlay.hidden = !(aiming && sniper);
+      nodes.crosshair.classList.toggle('hidden', aiming && sniper);
+      nodes.scope.hidden = !(aiming && sniper);
     },
     hitMarker(killed, holdMs = 90) {
-      hitmarker.classList.add('on');
-      hitmarker.classList.toggle('kill', killed);
+      nodes.hitmarker.classList.add('on');
+      nodes.hitmarker.classList.toggle('kill', killed);
       clearTimeout(hitTimer);
-      hitTimer = setTimeout(() => hitmarker.classList.remove('on', 'kill'), holdMs);
+      hitTimer = setTimeout(() => nodes.hitmarker.classList.remove('on', 'kill'), holdMs);
     },
     damageFrom(angleRad) {
-      vignette.classList.add('on');
+      nodes.vignette.classList.add('on');
       clearTimeout(vignetteTimer);
-      vignetteTimer = setTimeout(() => vignette.classList.remove('on'), 220);
-      damageDir.style.transform = `translate(-50%, -50%) rotate(${angleRad}rad)`;
-      damageDir.classList.add('on');
-      setTimeout(() => damageDir.classList.remove('on'), 500);
+      vignetteTimer = setTimeout(() => nodes.vignette.classList.remove('on'), 220);
+      nodes['damage-dir'].style.transform = `translate(-50%, -50%) rotate(${angleRad}rad)`;
+      nodes['damage-dir'].classList.add('on');
+      setTimeout(() => nodes['damage-dir'].classList.remove('on'), 500);
     },
     setDead(dead, spectatorName) {
-      deathNotice.hidden = !dead;
-      if (dead) setText(el('death-text'), `You are down — ${spectatorName} still fights.`, 'deathText');
+      nodes['death-notice'].hidden = !dead;
+      if (dead) setText(document.getElementById('death-text'), `You are down — ${spectatorName} still fights.`, 'deathText');
     },
     announce(text, sub) {
-      announceTitle.textContent = text;
-      announceSub.textContent = sub;
-      announceBox.classList.add('on');
+      nodes['announce-title'].textContent = text;
+      nodes['announce-sub'].textContent = sub;
+      nodes.announce.classList.add('on');
       clearTimeout(announceTimer);
-      announceTimer = setTimeout(() => announceBox.classList.remove('on'), 3200);
+      announceTimer = setTimeout(() => nodes.announce.classList.remove('on'), 3200);
     },
     renderFeed(feed) {
-      feedList.innerHTML = '';
+      nodes.feed.innerHTML = '';
       for (let i = feed.length - 1; i >= 0; i -= 1) {
         const entry = document.createElement('div');
         entry.className = feed[i].good ? 'good' : 'bad';
         entry.textContent = feed[i].text;
-        feedList.appendChild(entry);
+        nodes.feed.appendChild(entry);
       }
     },
     setProgress(label, fraction) {
       if (fraction <= 0) {
-        progressWrap.hidden = true;
+        nodes['progress-wrap'].hidden = true;
         return;
       }
-      progressWrap.hidden = false;
-      setText(progressLabel, label, 'progressLabel');
-      progressBar.style.width = `${Math.round(fraction * 100)}%`;
+      nodes['progress-wrap'].hidden = false;
+      setText(nodes['progress-label'], label, 'progressLabel');
+      nodes['progress-bar'].style.width = `${Math.round(fraction * 100)}%`;
     },
     showBuy(show) {
-      buyMenu.hidden = !show;
+      nodes['buy-menu'].hidden = !show;
     },
     refreshBuy,
     setBuyNote(text) {
-      setText(buyNote, text, 'buyNote');
+      setText(nodes['buy-note'], text, 'buyNote');
     },
     showOverlay(mode, data = {}) {
       const text = COPY[mode];
       if (mode === 'matchEnd') {
-        overlayTitle.textContent = data.title;
-        overlayCopy.textContent = data.copy;
+        nodes['overlay-title'].textContent = data.title;
+        nodes['overlay-copy'].textContent = data.copy;
       } else {
-        overlayTitle.textContent = text.title;
-        overlayCopy.textContent = text.copy;
+        nodes['overlay-title'].textContent = text.title;
+        nodes['overlay-copy'].textContent = text.copy;
       }
-      playButton.textContent = text.action;
-      overlay.hidden = false;
-      playButton.focus();
+      nodes.play.textContent = text.action;
+      nodes.overlay.hidden = false;
+      nodes.play.focus();
     },
     hideOverlay() {
-      overlay.hidden = true;
+      nodes.overlay.hidden = true;
     },
     drawMinimap(world, player, bots, state) {
-      const W = minimap.width;
-      const H = minimap.height;
+      const W = nodes.minimap.width;
+      const H = nodes.minimap.height;
       const scaleX = W / 64;
       const scaleY = H / 48;
       const toX = (x) => (x + 32) * scaleX;
@@ -287,9 +278,13 @@ export function createHud(callbacks) {
       mapCtx.font = 'bold 11px system-ui, sans-serif';
       mapCtx.textAlign = 'center';
       mapCtx.textBaseline = 'middle';
-      for (const [letter, site] of [['A', { x: -24, z: -14 }], ['B', { x: 24, z: -14 }]]) {
-        mapCtx.fillStyle = state.bomb.state === 'planted' && state.bomb.site === letter ? '#ff3b30' : '#e8862e';
-        mapCtx.fillText(letter, toX(site.x), toY(site.z));
+      const siteMarks = [
+        { letter: 'A', x: -24, z: -14 },
+        { letter: 'B', x: 24, z: -14 },
+      ];
+      for (const mark of siteMarks) {
+        mapCtx.fillStyle = state.bomb.state === 'planted' && state.bomb.site === mark.letter ? '#ff3b30' : '#e8862e';
+        mapCtx.fillText(mark.letter, toX(mark.x), toY(mark.z));
       }
       const dot = (x, z, color, radius = 3) => {
         mapCtx.fillStyle = color;

@@ -1,8 +1,9 @@
-// Boot and the one loop: a fixed 60 Hz simulation feeding a render at the display's
-// rate. main.js owns the wiring — the round state machine, the player's trigger,
-// the buy flow, the pause — and nothing else; every system lives in its own module.
-// ?shot=start|play|buy|end with &seed=N stages a deterministic frame for a capture,
-// renders it twice, then freezes it and sets window.__shotReady.
+// Boot and the one loop: a fixed 60 Hz simulation feeding a render at the
+// display's rate. main.js owns the wiring — the round state machine, the
+// player's trigger, the buy flow, the pause — and nothing else; every system
+// lives in its own module.
+// ?shot=start|play|buy|end with &seed=N stages a deterministic frame for a
+// capture, renders it twice, then freezes it and sets window.__shotReady.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { mulberry32 } from './rng.js';
@@ -18,10 +19,10 @@ import { createEconomy, SHOP } from './economy.js';
 import { createAudio } from './audio.js';
 import { createHud } from './hud.js';
 
-const FIXED_STEP = 1 / 60;
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seed = Number.parseInt(params.get('seed') ?? '1', 10) || 1;
+const STEP = 1 / 60;
+const query = new URLSearchParams(window.location.search);
+const shot = query.get('shot');
+const seed = Number.parseInt(query.get('seed') ?? '1', 10) || 1;
 const random = mulberry32(shot ? seed : (Date.now() % 2147483647) || 1);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -49,32 +50,33 @@ const economy = createEconomy(state, weapons, player);
 const shootables = world.shootables.concat(bots.hitMeshes);
 const body = player.state;
 
-let buyMenuOpen = false;
+let shopOpen = false;
 let paused = false;
 let frozen = false;
 let started = false;
-let prevFiring = false;
-let shakeTime = 0;
-let shakeMag = 0;
-let mapTimer = 0;
-let lastAnnounceSeq = 0;
-let lastFeedSeq = 0;
+let wasFiring = false;
+let tremorTime = 0;
+let tremorAmp = 0;
+let mapClock = 0;
+let seenAnnounce = 0;
+let seenFeed = 0;
 let accumulator = 0;
 let lastTime = performance.now();
 
-const direction = new THREE.Vector3();
-const aimPoint = new THREE.Vector3();
-const lookDelta = { x: 0, y: 0 };
-// The teammate panel rebuilds only when a health or alive flag actually changes;
-// the comparison is six numbers, so the frame loop allocates nothing for it.
-const strikeBots = bots.list.filter((b) => b.team === TEAMS.STRIKE);
-let lastH0 = -1;
-let lastH1 = -1;
-let lastH2 = -1;
-let lastA0 = false;
-let lastA1 = false;
-let lastA2 = false;
-let buyKey = '';
+const rayDir = new THREE.Vector3();
+const aimSpot = new THREE.Vector3();
+const lookMove = { x: 0, y: 0 };
+// The teammate panel rebuilds only when a health or alive flag actually
+// changes; the comparison is six numbers, so the frame loop allocates
+// nothing for it.
+const mates = bots.list.filter((b) => b.team === TEAMS.STRIKE);
+let lastHp0 = -1;
+let lastHp1 = -1;
+let lastHp2 = -1;
+let lastLive0 = false;
+let lastLive1 = false;
+let lastLive2 = false;
+let shopKey = '';
 
 const hud = createHud({
   onPlay() {
@@ -88,13 +90,13 @@ const hud = createHud({
     if (result.ok) audio.buy();
     else audio.denied();
     hud.setBuyNote(result.reason);
-    refreshBuyMenu();
+    refreshShop();
     syncHud();
   },
   onDeploy() {
     audio.unlock();
     audio.click();
-    closeBuyMenu();
+    closeShop();
     input.requestLock();
   },
 });
@@ -111,27 +113,27 @@ function onLockChange(locked) {
     paused = true;
     hud.showOverlay('paused');
   } else if (state.phase === 'buy') {
-    openBuyMenu();
+    openShop();
   }
 }
 
-function openBuyMenu() {
+function openShop() {
   if (state.phase !== 'buy') return;
   // The menu is clicked with a free mouse: release the pointer lock first,
   // or it stays held over from the previous round and the menu cannot be used.
   input.releaseLock();
-  buyMenuOpen = true;
+  shopOpen = true;
   hud.showBuy(true);
-  refreshBuyMenu();
+  refreshShop();
 }
 
-function closeBuyMenu() {
-  buyMenuOpen = false;
+function closeShop() {
+  shopOpen = false;
   hud.showBuy(false);
 }
 
-function refreshBuyMenu() {
-  buyKey = `${state.money}|${weapons.state.grenades}|${body.armour}|${weapons.state.owned.length}`;
+function refreshShop() {
+  shopKey = `${state.money}|${weapons.state.grenades}|${body.armour}|${weapons.state.owned.length}`;
   hud.refreshBuy(
     state.money,
     weapons.state.owned.map((slot) => slot.def.id),
@@ -141,6 +143,13 @@ function refreshBuyMenu() {
 }
 
 // ---- match / round flow -------------------------------------------------
+
+const ROUND_END_COPY = {
+  elimination: (won) => (won ? 'Enemy team eliminated' : 'Your team was eliminated'),
+  bomb: () => 'The bomb exploded',
+  defused: () => 'The bomb was defused',
+  time: () => 'Time expired — the defence holds',
+};
 
 function startMatch() {
   resetMatch(state);
@@ -155,20 +164,20 @@ function startRound() {
   bots.resetRound(state.round);
   combat.reset();
   bomb.reset();
-  shakeTime = 0;
-  prevFiring = false;
+  tremorTime = 0;
+  wasFiring = false;
   hud.setDead(false);
-  closeBuyMenu();
+  closeShop();
   hud.hideOverlay();
   announce(state, `ROUND ${state.round}`, state.round === 1 ? 'Plant the bomb at A or B' : `First to ${MATCH.winsToTake} rounds`);
-  if (!shot) openBuyMenu();
+  if (!shot) openShop();
 }
 
 function startLive() {
   state.phase = 'live';
   state.timer = MATCH.roundTime;
   state.freeze = false;
-  closeBuyMenu();
+  closeShop();
   hud.setHint('');
   if (!shot && !input.state.locked) {
     paused = true;
@@ -187,13 +196,7 @@ function endRound(winner, reason) {
   economy.keepLoadout();
   if (!player.state.alive) weapons.dropToPistol();
   const won = winner === TEAMS.STRIKE;
-  const reasonText = {
-    elimination: won ? 'Enemy team eliminated' : 'Your team was eliminated',
-    bomb: 'The bomb exploded',
-    defused: 'The bomb was defused',
-    time: 'Time expired — the defence holds',
-  }[reason];
-  announce(state, `${TEAM_NAME[winner]} WINS THE ROUND`, reasonText);
+  announce(state, `${TEAM_NAME[winner]} WINS THE ROUND`, ROUND_END_COPY[reason](won));
   if (won) audio.roundWin();
   else audio.roundLose();
 }
@@ -243,13 +246,13 @@ function checkRoundEnd() {
 function detonateBomb() {
   state.bomb.state = 'exploded';
   bomb.detonate();
-  aimPoint.set(state.bomb.x, 0.5, state.bomb.z);
-  combat.explosion(aimPoint);
+  aimSpot.set(state.bomb.x, 0.5, state.bomb.z);
+  combat.explosion(aimSpot);
   const dist = Math.hypot(state.bomb.x - body.position.x, state.bomb.z - body.position.z);
   audio.explosion(dist);
   if (dist < 14) {
-    shakeTime = 0.6;
-    shakeMag = 0.05 * (1 - dist / 14);
+    tremorTime = 0.6;
+    tremorAmp = 0.05 * (1 - dist / 14);
   }
 }
 
@@ -365,8 +368,8 @@ const combatCtx = {
   damageTarget,
   onExplosion(point, playerDist) {
     if (playerDist < 10) {
-      shakeTime = 0.4;
-      shakeMag = 0.04 * (1 - playerDist / 10);
+      tremorTime = 0.4;
+      tremorAmp = 0.04 * (1 - playerDist / 10);
     }
   },
 };
@@ -374,13 +377,13 @@ const combatCtx = {
 function shoot(spread) {
   const def = weapons.currentDef();
   if (!weapons.takeRound()) return false;
-  camera.getWorldDirection(direction);
-  direction.x += (random() * 2 - 1) * spread;
-  direction.y += (random() * 2 - 1) * spread;
-  direction.z += (random() * 2 - 1) * spread;
-  direction.normalize();
+  camera.getWorldDirection(rayDir);
+  rayDir.x += (random() * 2 - 1) * spread;
+  rayDir.y += (random() * 2 - 1) * spread;
+  rayDir.z += (random() * 2 - 1) * spread;
+  rayDir.normalize();
   scene.updateMatrixWorld(true);
-  const hit = combat.playerShoot(camera.position, direction, def, shootables);
+  const hit = combat.playerShoot(camera.position, rayDir, def, shootables);
   weapons.pullTrigger();
   player.recoil(def.recoil * (0.8 + random() * 0.4), (random() * 2 - 1) * def.recoil * 0.6);
   audio.shot(def.kind, 0);
@@ -398,34 +401,25 @@ function shoot(spread) {
 
 // ---- fixed-step simulation --------------------------------------------------
 
-function step(dt) {
-  if (state.phase === 'buy' || state.phase === 'live' || state.phase === 'roundEnd') {
-    state.elapsed += dt;
-  }
-  // Gunfire older than 2 s is forgotten; bots only chase fresh sound.
-  while (state.shotsHeard.length > 0 && state.elapsed - state.shotsHeard[0].at > 2) state.shotsHeard.shift();
+function stepBuy(dt) {
+  state.timer -= dt;
+  bots.update(dt, botCtx);
+  weapons.step(dt, 0, false);
+  if (state.timer <= 0) startLive();
+}
 
-  if (state.phase === 'buy') {
-    state.timer -= dt;
-    bots.update(dt, botCtx);
-    weapons.step(dt, 0, false);
-    if (state.timer <= 0) startLive();
-    return;
+function stepRoundEnd(dt) {
+  combat.update(dt, combatCtx);
+  if (state.elapsed < state.roundEndAt) return;
+  const decided = state.score[0] >= MATCH.winsToTake || state.score[1] >= MATCH.winsToTake || state.round >= MATCH.maxRounds;
+  if (decided) finishMatch();
+  else {
+    state.round += 1;
+    startRound();
   }
-  if (state.phase === 'roundEnd') {
-    combat.update(dt, combatCtx);
-    if (state.elapsed >= state.roundEndAt) {
-      const decided = state.score[0] >= MATCH.winsToTake || state.score[1] >= MATCH.winsToTake || state.round >= MATCH.maxRounds;
-      if (decided) finishMatch();
-      else {
-        state.round += 1;
-        startRound();
-      }
-    }
-    return;
-  }
-  if (state.phase !== 'live') return;
+}
 
+function stepLive(dt) {
   state.timer -= dt;
   const aiming = input.state.aiming && body.alive;
   player.step(dt, input.state.keys, aiming);
@@ -459,7 +453,37 @@ function step(dt) {
   checkRoundEnd();
 }
 
+function step(dt) {
+  if (state.phase === 'buy' || state.phase === 'live' || state.phase === 'roundEnd') {
+    state.elapsed += dt;
+  }
+  // Gunfire older than 2 s is forgotten; bots only chase fresh sound.
+  while (state.shotsHeard.length > 0 && state.elapsed - state.shotsHeard[0].at > 2) state.shotsHeard.shift();
+
+  switch (state.phase) {
+    case 'buy':
+      stepBuy(dt);
+      break;
+    case 'roundEnd':
+      stepRoundEnd(dt);
+      break;
+    case 'live':
+      stepLive(dt);
+      break;
+    default:
+      break;
+  }
+}
+
 // ---- per-frame input and HUD -------------------------------------------------
+
+function buyByKey(index) {
+  const result = economy.buy(SHOP[index].id);
+  if (result.ok) audio.buy();
+  else audio.denied();
+  hud.setBuyNote(result.reason);
+  refreshShop();
+}
 
 function handleKeys() {
   const pressed = input.state.pressed;
@@ -468,46 +492,42 @@ function handleKeys() {
   }
   if (pressed.has('KeyG') && state.phase === 'live' && body.alive && weapons.state.grenades > 0) {
     weapons.state.grenades -= 1;
-    camera.getWorldDirection(direction);
-    aimPoint.copy(camera.position).addScaledVector(direction, 0.6);
-    combat.throwGrenade(aimPoint, direction, 'player');
+    camera.getWorldDirection(rayDir);
+    aimSpot.copy(camera.position).addScaledVector(rayDir, 0.6);
+    combat.throwGrenade(aimSpot, rayDir, 'player');
   }
   if (pressed.has('KeyB') && state.phase === 'buy') {
-    if (buyMenuOpen) {
-      closeBuyMenu();
+    if (shopOpen) {
+      closeShop();
       input.requestLock();
     } else {
       input.releaseLock();
-      openBuyMenu();
+      openShop();
     }
   }
-  if (pressed.has('Enter') && buyMenuOpen) {
-    closeBuyMenu();
+  if (pressed.has('Enter') && shopOpen) {
+    closeShop();
     input.requestLock();
   }
   for (let i = 0; i < 6; i += 1) {
     if (!pressed.has(`Digit${i + 1}`)) continue;
-    if (buyMenuOpen && state.phase === 'buy') {
-      const result = economy.buy(SHOP[i].id);
-      if (result.ok) audio.buy();
-      else audio.denied();
-      hud.setBuyNote(result.reason);
-      refreshBuyMenu();
+    if (shopOpen && state.phase === 'buy') {
+      buyByKey(i);
     } else if (i < 4 && state.phase !== 'menu' && state.phase !== 'matchEnd') {
       weapons.switchTo(i);
     }
   }
-  if (input.state.wheel !== 0 && !buyMenuOpen) weapons.cycle(input.state.wheel > 0 ? 1 : -1);
+  if (input.state.wheel !== 0 && !shopOpen) weapons.cycle(input.state.wheel > 0 ? 1 : -1);
 }
 
 function handleFiring() {
   if (state.phase !== 'live' || !body.alive || !input.state.locked || paused) {
-    prevFiring = input.state.firing;
+    wasFiring = input.state.firing;
     return;
   }
   const def = weapons.currentDef();
-  const wantFire = input.state.firing && (def.auto || !prevFiring);
-  prevFiring = input.state.firing;
+  const wantFire = input.state.firing && (def.auto || !wasFiring);
+  wasFiring = input.state.firing;
   if (!wantFire) return;
   if (weapons.ready()) {
     const aiming = input.state.aiming;
@@ -520,10 +540,10 @@ function handleFiring() {
 function syncCamera() {
   let shakeX = 0;
   let shakeY = 0;
-  if (shakeTime > 0) {
-    shakeTime -= 1 / 60;
-    shakeX = (random() - 0.5) * shakeMag;
-    shakeY = (random() - 0.5) * shakeMag;
+  if (tremorTime > 0) {
+    tremorTime -= 1 / 60;
+    shakeX = (random() - 0.5) * tremorAmp;
+    shakeY = (random() - 0.5) * tremorAmp;
   }
   camera.position.set(body.position.x, body.position.y + body.eye, body.position.z);
   camera.rotation.set(body.pitch + shakeX, body.yaw + shakeY, 0, 'YXZ');
@@ -534,6 +554,28 @@ function syncCamera() {
     camera.fov += (targetFov - camera.fov) * 0.25;
     camera.updateProjectionMatrix();
   }
+}
+
+function hintFor() {
+  if (state.phase === 'buy') return 'Buy phase — B for shop · Deploy when ready';
+  if (state.phase !== 'live') return '';
+  if (body.alive && state.bomb.state === 'carried' && state.bomb.carrier === 'player') {
+    const site = world.siteAt(body.position.x, body.position.z);
+    return site ? `Hold E to plant at site ${site}` : 'Carry the bomb to site A or B';
+  }
+  if (state.bomb.state === 'planted') return 'Bomb planted — guard the site';
+  return '';
+}
+
+function bombLine() {
+  if (state.bomb.state === 'planted') return `BOMB PLANTED — SITE ${state.bomb.site}`;
+  if (state.bomb.state === 'dropped') return 'BOMB DROPPED';
+  if (state.bomb.carrier === 'player') return 'YOU CARRY THE BOMB';
+  if (state.bomb.carrier) {
+    const carrier = bots.list.find((b) => b.id === state.bomb.carrier);
+    return `${carrier ? carrier.name : 'TEAMMATE'} CARRIES THE BOMB`;
+  }
+  return '';
 }
 
 function syncHud() {
@@ -548,49 +590,32 @@ function syncHud() {
   hud.setScore(state.score[0], state.score[1], state.round, MATCH.maxRounds);
   hud.setPips(strikeAlive(), wardenAlive());
   const h0 = Math.ceil(body.health);
-  const h1 = Math.ceil(strikeBots[0].health);
-  const h2 = Math.ceil(strikeBots[1].health);
-  if (h0 !== lastH0 || h1 !== lastH1 || h2 !== lastH2 || body.alive !== lastA0 || strikeBots[0].alive !== lastA1 || strikeBots[1].alive !== lastA2) {
-    lastH0 = h0;
-    lastH1 = h1;
-    lastH2 = h2;
-    lastA0 = body.alive;
-    lastA1 = strikeBots[0].alive;
-    lastA2 = strikeBots[1].alive;
+  const h1 = Math.ceil(mates[0].health);
+  const h2 = Math.ceil(mates[1].health);
+  if (h0 !== lastHp0 || h1 !== lastHp1 || h2 !== lastHp2 || body.alive !== lastLive0 || mates[0].alive !== lastLive1 || mates[1].alive !== lastLive2) {
+    lastHp0 = h0;
+    lastHp1 = h1;
+    lastHp2 = h2;
+    lastLive0 = body.alive;
+    lastLive1 = mates[0].alive;
+    lastLive2 = mates[1].alive;
     hud.setTeammates([
       { name: 'YOU', health: body.health, alive: body.alive },
-      { name: strikeBots[0].name, health: strikeBots[0].health, alive: strikeBots[0].alive },
-      { name: strikeBots[1].name, health: strikeBots[1].health, alive: strikeBots[1].alive },
+      { name: mates[0].name, health: mates[0].health, alive: mates[0].alive },
+      { name: mates[1].name, health: mates[1].health, alive: mates[1].alive },
     ]);
   }
-  const bombText =
-    state.bomb.state === 'planted'
-      ? `BOMB PLANTED — SITE ${state.bomb.site}`
-      : state.bomb.state === 'dropped'
-        ? 'BOMB DROPPED'
-        : state.bomb.carrier === 'player'
-          ? 'YOU CARRY THE BOMB'
-          : state.bomb.carrier
-            ? `${(bots.list.find((b) => b.id === state.bomb.carrier) || {}).name || 'TEAMMATE'} CARRIES THE BOMB`
-            : '';
-  hud.setBombStatus(bombText);
-  if (state.phase === 'buy') hud.setHint('Buy phase — B for shop · Deploy when ready');
-  else if (state.phase === 'live' && body.alive && state.bomb.state === 'carried' && state.bomb.carrier === 'player') {
-    const site = world.siteAt(body.position.x, body.position.z);
-    hud.setHint(site ? `Hold E to plant at site ${site}` : 'Carry the bomb to site A or B');
-  } else if (state.phase === 'live' && state.bomb.state === 'planted') {
-    hud.setHint('Bomb planted — guard the site');
-  } else if (state.phase === 'live' && !body.alive) hud.setHint('');
-  else if (state.phase === 'live') hud.setHint('');
+  hud.setBombStatus(bombLine());
+  hud.setHint(hintFor());
   const aiming = input.state.aiming && body.alive;
   const spreadPx = weapons.spread(player.groundSpeed(), aiming, body.crouching, body.onGround) * 900;
   hud.setCrosshair(spreadPx, aiming, weapons.currentDef().id === 'sniper');
-  if (state.feedSeq !== lastFeedSeq) {
-    lastFeedSeq = state.feedSeq;
+  if (state.feedSeq !== seenFeed) {
+    seenFeed = state.feedSeq;
     hud.renderFeed(state.feed);
   }
-  if (state.announceSeq !== lastAnnounceSeq) {
-    lastAnnounceSeq = state.announceSeq;
+  if (state.announceSeq !== seenAnnounce) {
+    seenAnnounce = state.announceSeq;
     const latest = state.announcements[state.announcements.length - 1];
     if (latest) hud.announce(latest.text, latest.sub);
   }
@@ -601,9 +626,9 @@ function syncHud() {
   } else {
     hud.setProgress('', 0);
   }
-  if (buyMenuOpen) {
+  if (shopOpen) {
     const key = `${state.money}|${weapons.state.grenades}|${body.armour}|${weapons.state.owned.length}`;
-    if (key !== buyKey) refreshBuyMenu();
+    if (key !== shopKey) refreshShop();
   }
 }
 
@@ -612,28 +637,27 @@ function frame(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
   if (!frozen) {
-    input.takeLook(lookDelta);
-    const look = lookDelta;
+    input.takeLook(lookMove);
     const aiming = input.state.aiming && body.alive;
     const sensitivity = aiming ? (weapons.currentDef().id === 'sniper' ? 0.35 : 0.6) : 1;
-    if (input.state.locked) player.look(look.x * sensitivity, look.y * sensitivity);
+    if (input.state.locked) player.look(lookMove.x * sensitivity, lookMove.y * sensitivity);
     handleKeys();
     handleFiring();
     if (!paused) {
       accumulator += dt;
       let steps = 0;
-      while (accumulator >= FIXED_STEP && steps < 5) {
-        step(FIXED_STEP);
-        accumulator -= FIXED_STEP;
+      while (accumulator >= STEP && steps < 5) {
+        step(STEP);
+        accumulator -= STEP;
         steps += 1;
       }
-      if (accumulator > FIXED_STEP * 5) accumulator = 0;
+      if (accumulator > STEP * 5) accumulator = 0;
     }
     syncCamera();
     syncHud();
-    mapTimer += dt;
-    if (mapTimer > 0.1) {
-      mapTimer = 0;
+    mapClock += dt;
+    if (mapClock > 0.1) {
+      mapClock = 0;
       hud.drawMinimap(world, body, bots.list, state);
     }
     input.endFrame();
@@ -644,7 +668,7 @@ function frame(now) {
 // ---- deterministic screenshot staging -----------------------------------------
 
 function settle(steps) {
-  for (let index = 0; index < steps; index += 1) step(FIXED_STEP);
+  for (let index = 0; index < steps; index += 1) step(STEP);
 }
 
 function aimAt(point) {
@@ -674,22 +698,23 @@ function paintTwiceThenReady() {
   requestAnimationFrame(paint);
 }
 
-function runShot(name) {
-  hud.hideOverlay();
-  if (name === 'start') {
-    // Menu over the yard: the player looks down mid from the spawn ridge.
+const SHOTS = {
+  // Menu over the yard: the player looks down mid from the spawn ridge.
+  start() {
     body.position.set(-6, 0, 18);
     body.yaw = -0.25;
     body.pitch = -0.02;
     bots.resetRound(1);
     settle(10);
     hud.showOverlay('start');
-  } else if (name === 'buy') {
+  },
+  buy() {
     startMatch();
     settle(5);
-    openBuyMenu();
+    openShop();
     body.yaw = 0;
-  } else if (name === 'end') {
+  },
+  end() {
     startMatch();
     state.score = [5, 3];
     state.kills = 11;
@@ -704,11 +729,12 @@ function runShot(name) {
     bomb.dropAt(SITES.A.x, SITES.A.z);
     body.position.set(-13, 0, -3);
     settle(20);
-    aimPoint.set(SITES.A.x, 1.2, SITES.A.z);
-    aimAt(aimPoint);
+    aimSpot.set(SITES.A.x, 1.2, SITES.A.z);
+    aimAt(aimSpot);
     finishMatch();
-  } else {
-    // 'play': mid-round, rifle in hand, an enemy in the sights.
+  },
+  // Mid-round, rifle in hand, an enemy in the sights.
+  play() {
     startMatch();
     state.score = [2, 1];
     state.round = 4;
@@ -731,14 +757,19 @@ function runShot(name) {
         return da - db;
       })[0];
     if (enemy) {
-      aimPoint.set(enemy.position.x, enemy.position.y + 1.1, enemy.position.z);
-      aimAt(aimPoint);
+      aimSpot.set(enemy.position.x, enemy.position.y + 1.1, enemy.position.z);
+      aimAt(aimSpot);
       shoot(0);
       settle(2);
     }
     feed(state, 'YOU ▸ MIRA · HEADSHOT', true);
     feed(state, 'JUNO ▸ DRAKE', true);
-  }
+  },
+};
+
+function runShot(name) {
+  hud.hideOverlay();
+  SHOTS[name]();
   syncCamera();
   syncHud();
   hud.drawMinimap(world, body, bots.list, state);
