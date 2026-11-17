@@ -1,6 +1,9 @@
-// The one place match state lives. Systems read and write this object; nobody keeps a
-// second copy of the score, the timer or the bomb. Entity state (positions, health)
-// lives with the entity modules, and this file only names the shared match facts.
+// The one place match state lives. Systems read and write this object; nobody
+// keeps a second copy of the score, the timer or the bomb. Entity state
+// (positions, health) lives with the entity modules, and this file only names
+// the shared match facts — the phase, the score, the money, the bomb, and the
+// two short-lived message lists the HUD drains every frame.
+
 export const TEAMS = { STRIKE: 0, WARDEN: 1 };
 export const TEAM_NAME = ['STRIKE', 'WARDEN'];
 
@@ -25,6 +28,21 @@ export const ECONOMY = {
   maxMoney: 16000,
 };
 
+// The bomb: carried by the player at round start, dropped on death, planted at
+// a site, then either explodes or is defused. One bomb, one lifecycle.
+function freshBomb() {
+  return {
+    state: 'carried', // carried | dropped | planted | exploded | defused
+    carrier: 'player', // 'player' | bot id | null
+    site: null, // 'A' | 'B' once planted
+    x: 0,
+    z: 0,
+    plantProgress: 0, // 0..1 while someone holds the plant
+    defuseProgress: 0, // 0..1 while a defender holds the defuse
+    plantedBy: null,
+  };
+}
+
 export function createState() {
   return {
     phase: 'menu', // menu | buy | live | roundEnd | matchEnd
@@ -36,18 +54,7 @@ export function createState() {
     lossStreak: 0,
     kills: 0,
     deaths: 0,
-    // The bomb: carried by the player at round start, dropped on death, planted at a
-    // site, then either explodes or is defused. One bomb, one lifecycle.
-    bomb: {
-      state: 'carried', // carried | dropped | planted | exploded | defused
-      carrier: 'player', // 'player' | bot id | null
-      site: null, // 'A' | 'B' once planted
-      x: 0,
-      z: 0,
-      plantProgress: 0, // 0..1 while someone holds the plant
-      defuseProgress: 0, // 0..1 while a defender holds the defuse
-      plantedBy: null,
-    },
+    bomb: freshBomb(),
     roundWinner: null, // 0 | 1 once the round is decided
     roundReason: '', // 'elimination' | 'bomb' | 'defused' | 'time'
     matchWinner: null,
@@ -62,7 +69,10 @@ export function createState() {
   };
 }
 
-export function resetMatch(state) {
+// Shared per-match facts: everything a fresh match resets, before the first
+// round's own reset runs. The score array is replaced, not zeroed in place,
+// so any system still holding the old array cannot see a half-reset score.
+function clearMatchFacts(state) {
   state.phase = 'buy';
   state.round = 1;
   state.score = [0, 0];
@@ -76,33 +86,48 @@ export function resetMatch(state) {
   state.feed = [];
   state.announcements = [];
   state.spotted.clear();
+}
+
+export function resetMatch(state) {
+  clearMatchFacts(state);
   resetRound(state);
 }
 
+// Shared per-round facts. The bomb object itself is kept and its fields are
+// rewritten, because the bomb module holds no reference to it — it reads
+// state.bomb fresh every update — while the timer and freeze are the round's
+// own. Spotted enemies and heard shots do not survive a round boundary.
 export function resetRound(state) {
   state.phase = 'buy';
   state.timer = MATCH.buyTime;
   state.freeze = true;
   state.roundWinner = null;
   state.roundReason = '';
-  state.bomb.state = 'carried';
-  state.bomb.carrier = 'player';
-  state.bomb.site = null;
-  state.bomb.plantProgress = 0;
-  state.bomb.defuseProgress = 0;
-  state.bomb.plantedBy = null;
+  const bomb = state.bomb;
+  bomb.state = 'carried';
+  bomb.carrier = 'player';
+  bomb.site = null;
+  bomb.plantProgress = 0;
+  bomb.defuseProgress = 0;
+  bomb.plantedBy = null;
   state.spotted.clear();
   state.shotsHeard = [];
 }
 
+// Both message lists are capped newest-last queues: push, bump the sequence
+// the HUD watches, and drop the oldest entry once the cap is passed. The cap
+// keeps a long firefight from growing either list without bound.
+function pushCapped(list, entry, cap) {
+  list.push(entry);
+  if (list.length > cap) list.shift();
+}
+
 export function announce(state, text, sub = '') {
-  state.announcements.push({ text, sub, at: state.elapsed });
+  pushCapped(state.announcements, { text, sub, at: state.elapsed }, 4);
   state.announceSeq += 1;
-  if (state.announcements.length > 4) state.announcements.shift();
 }
 
 export function feed(state, text, good) {
-  state.feed.push({ text, good: !!good, at: state.elapsed });
+  pushCapped(state.feed, { text, good: !!good, at: state.elapsed }, 5);
   state.feedSeq += 1;
-  if (state.feed.length > 5) state.feed.shift();
 }

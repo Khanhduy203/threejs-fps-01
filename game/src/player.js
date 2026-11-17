@@ -1,22 +1,47 @@
-// The player: acceleration, friction, gravity, crouch and jump, resolved as a box
-// against the world's colliders one axis at a time, so a wall never swallows the
-// player. It also owns health and armour: armour absorbs half of every hit until
-// it runs out. Movement speed feeds weapon spread, so stopping to aim pays.
+// The player: acceleration, friction, gravity, crouch and jump, resolved as a
+// box against the world's colliders one axis at a time, so a wall never
+// swallows the player. It also owns health and armour: armour absorbs half of
+// every hit until it runs out. Movement speed feeds weapon spread, so
+// stopping to aim pays.
+//
+// The step is staged — stance, then horizontal wish, then vertical, then the
+// three axis resolutions in order — because each stage only needs the result
+// of the one before it, and a bug in one stage cannot silently move the
+// player in another. The numbers live in one TUNING table at the top, so a
+// feel change is a value change, never a hunt through the step.
 import * as THREE from 'three';
 
-const RADIUS = 0.34;
-const STAND_HEIGHT = 1.72;
-const CROUCH_HEIGHT = 1.12;
-const STAND_EYE = 1.6;
-const CROUCH_EYE = 1.02;
-const WALK_SPEED = 5.2;
-const CROUCH_SPEED = 2.4;
-const ADS_SPEED = 3.2;
-const GROUND_ACCEL = 42;
-const AIR_ACCEL = 9;
-const FRICTION = 9;
-const GRAVITY = 20;
-const JUMP_SPEED = 6.2;
+const TUNING = {
+  radius: 0.34,
+  standHeight: 1.72,
+  crouchHeight: 1.12,
+  standEye: 1.6,
+  crouchEye: 1.02,
+  walkSpeed: 5.2,
+  crouchSpeed: 2.4,
+  adsSpeed: 3.2,
+  groundAccel: 42,
+  airAccel: 9,
+  friction: 9,
+  gravity: 20,
+  jumpSpeed: 6.2,
+  maxFall: 30,
+  lookSensitivity: 0.0022,
+  pitchLimit: 1.45,
+  eyeLerp: 12,
+  // lift keeps the feet and the crown out of the horizontal tests, so
+  // standing on the floor is not read as walking into a wall.
+  wallLift: 0.04,
+  standLift: 0.02,
+};
+
+// Keys that crouch, and the two movement axes, as tables instead of inline
+// literals — the step reads them, and a remap would touch one line each.
+const CROUCH_KEYS = ['ControlLeft', 'ControlRight', 'KeyC'];
+const MOVE_KEYS = {
+  forward: ['KeyW', 'KeyS'],
+  strafe: ['KeyD', 'KeyA'],
+};
 
 export function createPlayer(colliders) {
   const player = {
@@ -24,10 +49,10 @@ export function createPlayer(colliders) {
     velocity: new THREE.Vector3(),
     yaw: 0,
     pitch: 0,
-    eye: STAND_EYE,
+    eye: TUNING.standEye,
     onGround: true,
     crouching: false,
-    height: STAND_HEIGHT,
+    height: TUNING.standHeight,
     health: 100,
     armour: 0,
     alive: true,
@@ -35,74 +60,125 @@ export function createPlayer(colliders) {
   const probe = new THREE.Box3();
   const wish = new THREE.Vector3();
 
-  // lift keeps the feet and the crown out of the horizontal tests, so standing on
-  // the floor is not read as walking into a wall.
-  function overlaps(x, y, z, height, lift) {
-    probe.min.set(x - RADIUS, y + lift, z - RADIUS);
-    probe.max.set(x + RADIUS, y + height - lift, z + RADIUS);
-    for (const collider of colliders) if (probe.intersectsBox(collider)) return collider;
+  // The player's box at (x, y, z) with the given height, trimmed by `lift`
+  // at the feet and the crown. Returns the first collider it touches.
+  function hitCollider(x, y, z, height, lift) {
+    probe.min.set(x - TUNING.radius, y + lift, z - TUNING.radius);
+    probe.max.set(x + TUNING.radius, y + height - lift, z + TUNING.radius);
+    for (const collider of colliders) {
+      if (probe.intersectsBox(collider)) return collider;
+    }
     return null;
   }
 
-  function look(dx, dy, sensitivity = 0.0022) {
+  function look(dx, dy, sensitivity = TUNING.lookSensitivity) {
     player.yaw -= dx * sensitivity;
-    player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - dy * sensitivity));
+    const limit = TUNING.pitchLimit;
+    player.pitch = Math.max(-limit, Math.min(limit, player.pitch - dy * sensitivity));
   }
 
   function recoil(pitchKick, yawKick) {
-    player.pitch = Math.min(1.45, player.pitch + pitchKick);
+    player.pitch = Math.min(TUNING.pitchLimit, player.pitch + pitchKick);
     player.yaw += yawKick;
   }
 
-  function step(dt, keys, aiming) {
-    if (!player.alive) return;
-    const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
+  function wantsCrouch(keys) {
+    return CROUCH_KEYS.some((code) => keys.has(code));
+  }
+
+  // Standing up needs headroom: if a low ceiling blocks the full height, the
+  // player stays crouched instead of clipping into the ceiling.
+  function updateStance(dt, keys) {
+    const crouching = wantsCrouch(keys);
     if (crouching && !player.crouching) {
       player.crouching = true;
-      player.height = CROUCH_HEIGHT;
-    } else if (!crouching && player.crouching && !overlaps(player.position.x, player.position.y, player.position.z, STAND_HEIGHT, 0.02)) {
-      player.crouching = false;
-      player.height = STAND_HEIGHT;
+      player.height = TUNING.crouchHeight;
+    } else if (!crouching && player.crouching) {
+      const blocked = hitCollider(
+        player.position.x, player.position.y, player.position.z,
+        TUNING.standHeight, TUNING.standLift,
+      );
+      if (!blocked) {
+        player.crouching = false;
+        player.height = TUNING.standHeight;
+      }
     }
-    const eyeTarget = player.crouching ? CROUCH_EYE : STAND_EYE;
-    player.eye += (eyeTarget - player.eye) * Math.min(1, dt * 12);
+    const eyeTarget = player.crouching ? TUNING.crouchEye : TUNING.standEye;
+    player.eye += (eyeTarget - player.eye) * Math.min(1, dt * TUNING.eyeLerp);
+  }
 
-    const forward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-    const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  // The wished direction from the held keys, rotated by the yaw: W is
+  // forward, S back, D right, A left, and a diagonal is normalised so it is
+  // no faster than a straight run.
+  function wishDirection(keys) {
+    const forward = (keys.has(MOVE_KEYS.forward[0]) ? 1 : 0) - (keys.has(MOVE_KEYS.forward[1]) ? 1 : 0);
+    const strafe = (keys.has(MOVE_KEYS.strafe[0]) ? 1 : 0) - (keys.has(MOVE_KEYS.strafe[1]) ? 1 : 0);
     wish.set(0, 0, 0);
     if (forward || strafe) {
       const sin = Math.sin(player.yaw);
       const cos = Math.cos(player.yaw);
       wish.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
     }
+    return wish;
+  }
 
-    let speed = player.crouching ? CROUCH_SPEED : WALK_SPEED;
-    if (aiming && !player.crouching) speed = ADS_SPEED;
-    const blend = Math.min(1, (player.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt / speed);
-    player.velocity.x += (wish.x * speed - player.velocity.x) * blend;
-    player.velocity.z += (wish.z * speed - player.velocity.z) * blend;
-    if (player.onGround && !wish.lengthSq()) {
-      const damp = Math.max(0, 1 - FRICTION * dt);
+  function moveSpeed(aiming) {
+    if (player.crouching) return TUNING.crouchSpeed;
+    if (aiming) return TUNING.adsSpeed;
+    return TUNING.walkSpeed;
+  }
+
+  function applyHorizontal(dt, keys, aiming) {
+    const direction = wishDirection(keys);
+    const speed = moveSpeed(aiming);
+    const accel = player.onGround ? TUNING.groundAccel : TUNING.airAccel;
+    const blend = Math.min(1, (accel * dt) / speed);
+    player.velocity.x += (direction.x * speed - player.velocity.x) * blend;
+    player.velocity.z += (direction.z * speed - player.velocity.z) * blend;
+    // Idle on the ground: friction bleeds the leftover velocity instead of
+    // letting the player glide to a stop.
+    if (player.onGround && !direction.lengthSq()) {
+      const damp = Math.max(0, 1 - TUNING.friction * dt);
       player.velocity.x *= damp;
       player.velocity.z *= damp;
     }
+  }
 
+  function applyVertical(dt, keys) {
     if (keys.has('Space') && player.onGround) {
-      player.velocity.y = JUMP_SPEED;
+      player.velocity.y = TUNING.jumpSpeed;
       player.onGround = false;
     }
-    player.velocity.y -= GRAVITY * dt;
+    player.velocity.y -= TUNING.gravity * dt;
+  }
 
+  // Each horizontal axis moves on its own and is tested on its own: hitting
+  // a wall on X still lets the player slide along Z, and a blocked axis
+  // zeroes that velocity component instead of bouncing the player back.
+  function resolveHorizontal(dt) {
+    const lift = TUNING.wallLift;
     const nextX = player.position.x + player.velocity.x * dt;
-    if (!overlaps(nextX, player.position.y, player.position.z, player.height, 0.04)) player.position.x = nextX;
-    else player.velocity.x = 0;
+    if (!hitCollider(nextX, player.position.y, player.position.z, player.height, lift)) {
+      player.position.x = nextX;
+    } else {
+      player.velocity.x = 0;
+    }
     const nextZ = player.position.z + player.velocity.z * dt;
-    if (!overlaps(player.position.x, player.position.y, nextZ, player.height, 0.04)) player.position.z = nextZ;
-    else player.velocity.z = 0;
+    if (!hitCollider(player.position.x, player.position.y, nextZ, player.height, lift)) {
+      player.position.z = nextZ;
+    } else {
+      player.velocity.z = 0;
+    }
+  }
 
+  // Vertical resolution: landing on a collider puts the feet on its top and
+  // grounds the player; hitting a ceiling from below puts the crown under
+  // it. The floor at y = 0 is the last resort, so a fall can never go below
+  // the map.
+  function resolveVertical(dt) {
     player.position.y += player.velocity.y * dt;
     player.onGround = false;
-    const hit = overlaps(player.position.x, player.position.y, player.position.z, player.height, 0);
+    const hit = hitCollider(player.position.x, player.position.y, player.position.z, player.height, 0);
     if (hit && player.velocity.y <= 0) {
       player.position.y = hit.max.y;
       player.velocity.y = 0;
@@ -116,10 +192,21 @@ export function createPlayer(colliders) {
       player.velocity.y = 0;
       player.onGround = true;
     }
-    player.velocity.y = Math.max(-30, player.velocity.y);
+    player.velocity.y = Math.max(-TUNING.maxFall, player.velocity.y);
   }
 
-  // Armour absorbs half the damage and loses that many points; the rest is health.
+  function step(dt, keys, aiming) {
+    if (!player.alive) return;
+    updateStance(dt, keys);
+    applyHorizontal(dt, keys, aiming);
+    applyVertical(dt, keys);
+    resolveHorizontal(dt);
+    resolveVertical(dt);
+  }
+
+  // Armour absorbs half the damage and loses that many points; the rest is
+  // health. The absorbed half is rounded up, so armour always takes at least
+  // its share of an odd hit. Returns the health damage actually dealt.
   function damage(amount) {
     if (!player.alive) return 0;
     let remaining = amount;
@@ -138,8 +225,8 @@ export function createPlayer(colliders) {
     player.velocity.set(0, 0, 0);
     player.yaw = yaw;
     player.pitch = 0;
-    player.eye = STAND_EYE;
-    player.height = STAND_HEIGHT;
+    player.eye = TUNING.standEye;
+    player.height = TUNING.standHeight;
     player.crouching = false;
     player.onGround = true;
     player.health = 100;
