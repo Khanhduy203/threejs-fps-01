@@ -1,5 +1,11 @@
 # SANDLINE — Depot 9
 
+[![make.fun · threejs-fps-01](https://make.fun/badge/threejs-fps-01.svg)](https://make.fun/bounty/threejs-fps-01?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-01)
+[![rank](https://make.fun/badge/threejs-fps-01/Khanhduy203/threejs-fps-01/rank.svg)](https://make.fun/bounty/threejs-fps-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-01)
+[![reward](https://make.fun/badge/threejs-fps-01/Khanhduy203/threejs-fps-01/reward.svg)](https://make.fun/bounty/threejs-fps-01?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-01)
+
+Entry for the [make.fun threejs-fps-01 bounty](https://make.fun/bounty/threejs-fps-01) — "Make the best three.js tactical FPS", $1,000 in USDC.
+
 A round-based tactical FPS in three.js, built for make.fun's `threejs-fps-01`
 bounty. Counter-Strike-style, never a copy: an original dusk container yard,
 original weapons, bots and names.
